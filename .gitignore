@@ -41,3 +41,7 @@ yarn-error.*
 /android
 
 backend/.env
+.env
+**/.env
+node_modules/
+**/node_modules/

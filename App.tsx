@@ -11,7 +11,34 @@ import {
   ImageBackground,
   ActivityIndicator,
   useWindowDimensions,
+  TouchableOpacity,
 } from 'react-native';
+
+import {
+  criarLista,
+  listarListas,
+  conectarBanco,
+  renomearLista,
+  excluirLista as excluirListaBanco,
+  salvarFavorito,
+  listarFavoritos,
+  removerFavorito,
+  atualizarObservacao,
+  adicionarFilmeALista,
+  listarFilmesDaLista,
+  removerFilmeDaLista,
+  salvarAvaliacao,
+  listarAvaliacoes,
+  atualizarAvaliacao,
+  excluirAvaliacao,
+} from './database';
+
+import { cadastrar, login, logout } from './auth';
+
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './firebase';
+
+import { sincronizarAoEntrar, sincronizarDados } from './sync';
 
 type Filme = {
   id: number;
@@ -24,7 +51,7 @@ type Filme = {
   genre_ids: number[];
 };
 
-const API_URL = 'http://localhost:3001/api/filmes/populares';
+const API_URL = 'https://vigilant-tribble-wrjgq5jxq6rv36x9-3001.app.github.dev/api/filmes/populares';
 
 const IMAGES_URL = 'https://image.tmdb.org/t/p/w500';
 
@@ -46,7 +73,41 @@ export default function App() {
   const [busca, setBusca] = useState('');
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState('');
+  const [listas, setListas] = useState<{ id: number; nome: string }[]>([]);
+  const [novaLista, setNovaLista] = useState('');
+  const [listaSelecionada, setListaSelecionada] = useState<number | null>(null);
+  const [filmesDaLista, setFilmesDaLista] = useState<any[]>([]);
+  const [favoritos, setFavoritos] = useState<number[]>([]);
+  const [filmesFavoritosSalvos, setFilmesFavoritosSalvos] = useState<any[]>([]);
+  const [observacoes, setObservacoes] = useState<Record<number, string>>({});
+  const [avaliacoes, setAvaliacoes] = useState<any[]>([]);
+  const [usuario, setUsuario] = useState<any>(null);
+  const [email, setEmail] = useState('');
+  const [senha, setSenha] = useState('');
+  const [modoCadastro, setModoCadastro] = useState(false);
 
+  useEffect(() => {
+  alert('O teste do banco começou!');
+  conectarBanco()
+    .then(() => alert('Banco SQLite conectado!'))
+    .catch((error) => alert('Erro no SQLite: ' + String(error)));
+}, []);
+useEffect(() => {
+  const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    setUsuario(user);
+
+    if (user) {
+      try {
+        await sincronizarAoEntrar();
+        console.log('Dados sincronizados com sucesso!');
+      } catch (error) {
+        console.error('Erro na sincronização:', error);
+      }
+    }
+  });
+
+  return unsubscribe;
+}, []);
   const { width } = useWindowDimensions();
 
   const larguraCard =
@@ -75,12 +136,363 @@ export default function App() {
 
     carregarFilmes();
   }, []);
+  useEffect(() => {
+  function quandoInternetVoltar() {
+    sincronizarDados();
+  }
 
-  const filmesFiltrados = filmes.filter((filme) =>
-    filme.title.toLowerCase().includes(busca.toLowerCase())
+  window.addEventListener('online', quandoInternetVoltar);
+
+  return () => {
+    window.removeEventListener('online', quandoInternetVoltar);
+  };
+}, []);
+async function criarNovaLista() {
+  if (!novaLista.trim()) return;
+
+  try {
+    await criarLista(novaLista.trim());
+    await sincronizarDados();
+    const atualizadas = await listarListas();
+    setListas(atualizadas);
+    setNovaLista('');
+  } catch (error) {
+  alert('Erro ao salvar lista: ' + String(error));
+}
+}
+async function editarLista(lista: { id: number; nome: string }) {
+  const novoNome = window.prompt('Digite o novo nome da lista:', lista.nome);
+
+  if (!novoNome || !novoNome.trim()) return;
+async function excluirListaDaTela(listaId: number) {
+  const confirmar = window.confirm(
+    'Tem certeza que deseja excluir esta lista?'
   );
 
+  if (!confirmar) return;
+
+  try {
+    await excluirListaBanco(listaId);
+
+    const atualizadas = await listarListas();
+    setListas(atualizadas);
+
+    if (listaSelecionada === listaId) {
+      setListaSelecionada(null);
+      setFilmesDaLista([]);
+    }
+
+    alert('Lista excluída com sucesso!');
+  } catch (error) {
+    console.error('Erro ao excluir lista:', error);
+    alert('Não foi possível excluir a lista.');
+  }
+}
+  try {
+    await renomearLista(lista.id, novoNome.trim());
+
+    const atualizadas = await listarListas();
+    setListas(atualizadas);
+
+    alert('Lista renomeada com sucesso!');
+  } catch (error) {
+    console.error('Erro ao renomear lista:', error);
+    alert('Não foi possível renomear a lista.');
+  }
+}
+useEffect(() => {
+  async function carregarListasSalvas() {
+    try {
+      const dados = await listarListas();
+      setListas(dados);
+    } catch (error) {
+      console.error('Erro ao carregar listas:', error);
+    }
+  }
+
+  carregarListasSalvas();
+}, []);
+useEffect(() => {
+  async function carregarFilmesDaLista() {
+    if (listaSelecionada === null) {
+      setFilmesDaLista([]);
+      return;
+    }
+
+    try {
+      const dados = await listarFilmesDaLista(listaSelecionada);
+      setFilmesDaLista(dados);
+    } catch (error) {
+      console.error('Erro ao carregar filmes da lista:', error);
+    }
+  }
+
+  carregarFilmesDaLista();
+}, [listaSelecionada]);
+useEffect(() => {
+  async function carregarFavoritosSalvos() {
+    try {
+      const salvos = await listarFavoritos();
+      setFilmesFavoritosSalvos(salvos);
+      setFavoritos(salvos.map((filme) => filme.filme_id));
+
+      const mapa: Record<number, string> = {};
+
+      salvos.forEach((filme) => {
+        mapa[filme.filme_id] = filme.observacao || '';
+      });
+
+      setObservacoes(mapa);
+    } catch (error) {
+      console.error('Erro ao carregar favoritos:', error);
+    }
+  }
+
+  carregarFavoritosSalvos();
+}, []);
+useEffect(() => {
+  async function carregarAvaliacoes() {
+    const dados = await listarAvaliacoes();
+    setAvaliacoes(dados);
+  }
+
+  carregarAvaliacoes();
+}, []);
+async function alternarFavorito(id: number) {
+  try {
+    const jaFavoritado = favoritos.includes(id);
+
+    if (jaFavoritado) {
+      await removerFavorito(id);
+    } else {
+      const filme = filmes.find((item) => item.id === id);
+
+      if (!filme) return;
+
+      await salvarFavorito({
+        filme_id: filme.id,
+        titulo: filme.title,
+        poster_path: filme.poster_path,
+        genero: generos[filme.genre_ids[0]] || 'Filme',
+        nota: filme.vote_average,
+        observacao: observacoes[id] || '',
+      });
+    }
+    await sincronizarDados();
+    const salvos = await listarFavoritos();
+
+    setFilmesFavoritosSalvos(salvos);
+    setFavoritos(salvos.map((filme) => filme.filme_id));
+
+  } catch (error) {
+    console.error('Erro ao atualizar favorito:', error);
+    alert('Não foi possível atualizar os favoritos.');
+  }
+}
+async function avaliarFilme(filme: Filme) {
+  const nota = Number(window.prompt('Dê uma nota de 0 a 10:'));
+
+  if (isNaN(nota) || nota < 0 || nota > 10) {
+    alert('Digite uma nota válida!');
+    return;
+  }
+
+  const comentario = window.prompt('Escreva um comentário:') || '';
+
+  await salvarAvaliacao(filme.id, filme.title, nota, comentario);
+  await sincronizarDados();
+  const dados = await listarAvaliacoes();
+  setAvaliacoes(dados);
+
+  alert('Avaliação salva!');
+}
+async function acessarConta() {
+  try {
+    if (modoCadastro) {
+      await cadastrar(email, senha);
+      alert('Conta criada com sucesso!');
+    } else {
+      await login(email, senha);
+      alert('Login realizado com sucesso!');
+    }
+  } catch (error: any) {
+    alert('Erro: ' + error.message);
+  }
+}
+
+async function sairDaConta() {
+  await logout();
+  setEmail('');
+  setSenha('');
+}
+async function editarAvaliacao(item: any) {
+  const notaTexto = window.prompt('Nova nota:', String(item.nota));
+
+  if (notaTexto === null) return;
+
+  const nota = Number(notaTexto);
+
+  if (isNaN(nota) || nota < 0 || nota > 10) {
+    alert('Digite uma nota de 0 a 10!');
+    return;
+  }
+
+  const comentario = window.prompt('Novo comentário:', item.comentario || '');
+
+  if (comentario === null) return;
+
+  await atualizarAvaliacao(item.id, nota, comentario);
+  await sincronizarDados();
+  setAvaliacoes(await listarAvaliacoes());
+  alert('Avaliação atualizada!');
+}
+async function removerAvaliacao(id: number) {
+  if (!window.confirm('Deseja excluir esta avaliação?')) return;
+
+  await excluirAvaliacao(id);
+  await sincronizarDados();
+  setAvaliacoes(await listarAvaliacoes());
+
+  alert('Avaliação excluída!');
+}
+async function adicionarFilmeSelecionado(filme: Filme) {
+  if (listaSelecionada === null) {
+    alert('Selecione uma lista primeiro!');
+    return;
+  }
+
+  try {
+    await adicionarFilmeALista(
+      listaSelecionada,
+      filme.id,
+      filme.title,
+      filme.poster_path
+    );
+    await sincronizarDados();
+    const atualizados = await listarFilmesDaLista(listaSelecionada);
+    setFilmesDaLista(atualizados);
+
+    alert('Filme adicionado à lista!');
+  } catch (error) {
+    console.error('Erro ao adicionar filme à lista:', error);
+    alert('Não foi possível adicionar o filme.');
+  }
+}
+
+async function excluirFilmeDaLista(filmeId: number) {
+  if (listaSelecionada === null) return;
+
+  try {
+    await removerFilmeDaLista(listaSelecionada, filmeId);
+    await sincronizarDados();
+    const atualizados = await listarFilmesDaLista(listaSelecionada);
+    setFilmesDaLista(atualizados);
+
+    alert('Filme removido da lista!');
+  } catch (error) {
+    console.error('Erro ao remover filme:', error);
+    alert('Não foi possível remover o filme.');
+  }
+}
+async function excluirListaDaTela(listaId: number) {
+  if (!window.confirm('Deseja excluir esta lista?')) return;
+
+  try {
+    await excluirListaBanco(listaId);
+
+    const atualizadas = await listarListas();
+    setListas(atualizadas);
+
+    if (listaSelecionada === listaId) {
+      setListaSelecionada(null);
+      setFilmesDaLista([]);
+    }
+
+    alert('Lista excluída!');
+  } catch (error) {
+    console.error(error);
+    alert('Erro ao excluir lista.');
+  }
+}
+const filmesFiltrados = filmes.filter((filme) =>
+  filme.title.toLowerCase().includes(busca.toLowerCase())
+);
+ 
   const destaque = filmes[0];
+
+  if (!usuario) {
+  return (
+    <View style={{
+      flex: 1,
+      backgroundColor: '#12091A',
+      justifyContent: 'center',
+      padding: 30,
+    }}>
+      <Text style={{
+        color: '#FFFFFF',
+        fontSize: 32,
+        fontWeight: 'bold',
+        textAlign: 'center',
+        marginBottom: 30,
+      }}>
+        🎬 CineMatch
+      </Text>
+
+      <TextInput
+        placeholder="E-mail"
+        placeholderTextColor="#999"
+        value={email}
+        onChangeText={setEmail}
+        autoCapitalize="none"
+        keyboardType="email-address"
+        style={{
+          backgroundColor: '#251A30',
+          color: '#FFFFFF',
+          padding: 15,
+          borderRadius: 10,
+          marginBottom: 15,
+        }}
+      />
+
+      <TextInput
+        placeholder="Senha"
+        placeholderTextColor="#999"
+        value={senha}
+        onChangeText={setSenha}
+        secureTextEntry
+        style={{
+          backgroundColor: '#251A30',
+          color: '#FFFFFF',
+          padding: 15,
+          borderRadius: 10,
+          marginBottom: 15,
+        }}
+      />
+
+      <TouchableOpacity
+        onPress={acessarConta}
+        style={{
+          backgroundColor: '#8B3DAD',
+          padding: 15,
+          borderRadius: 10,
+        }}
+      >
+        <Text style={{ color: '#FFFFFF', textAlign: 'center', fontWeight: 'bold' }}>
+          {modoCadastro ? 'Criar conta' : 'Entrar'}
+        </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        onPress={() => setModoCadastro(!modoCadastro)}
+        style={{ marginTop: 20 }}
+      >
+        <Text style={{ color: '#FFFFFF', textAlign: 'center' }}>
+          {modoCadastro ? 'Já tenho conta? Entrar' : 'Não tenho conta? Cadastrar'}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
 
   return (
     <View style={styles.container}>
@@ -88,6 +500,18 @@ export default function App() {
 
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
+          <TouchableOpacity
+  onPress={sairDaConta}
+  style={{
+    backgroundColor: '#6B2D91',
+    padding: 10,
+    borderRadius: 8,
+    alignSelf: 'flex-end',
+    marginBottom: 15,
+  }}
+>
+  <Text style={{ color: '#FFFFFF' }}>Sair da conta</Text>
+</TouchableOpacity>
 
           {/* CABEÇALHO */}
           <View style={styles.header}>
@@ -201,7 +625,46 @@ export default function App() {
                   ) : (
                     <View style={styles.poster} />
                   )}
-
+                <TouchableOpacity
+  onPress={() => alternarFavorito(filme.id)}
+  style={{
+    backgroundColor: '#251A30',
+    padding: 8,
+    borderRadius: 20,
+    alignSelf: 'flex-end',
+    marginTop: 8,
+  }}
+>
+  <Text style={{ fontSize: 20 }}>
+    {favoritos.includes(filme.id) ? '❤️' : '🤍'}
+  </Text>
+</TouchableOpacity>
+<TouchableOpacity
+  onPress={() => adicionarFilmeSelecionado(filme)}
+  style={{
+    backgroundColor: '#54236B',
+    padding: 8,
+    borderRadius: 8,
+    marginTop: 8,
+  }}
+>
+  <Text style={{ color: '#FFFFFF', textAlign: 'center', fontSize: 12 }}>
+    + Adicionar à lista
+  </Text>
+</TouchableOpacity>
+<TouchableOpacity
+  onPress={() => avaliarFilme(filme)}
+  style={{
+    backgroundColor: '#6B2D91',
+    padding: 8,
+    borderRadius: 8,
+    marginTop: 8,
+  }}
+>
+  <Text style={{ color: '#FFFFFF', textAlign: 'center' }}>
+    ⭐ Avaliar filme
+  </Text>
+</TouchableOpacity>
                   <Text style={styles.movieName} numberOfLines={2}>
                     {filme.title}
                   </Text>
@@ -217,7 +680,264 @@ export default function App() {
               ))}
             </View>
           )}
+{/* MINHAS LISTAS */}
+<View style={{ marginTop: 30, marginBottom: 25 }}>
+  <Text style={{
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginBottom: 15,
+  }}>
+    Minhas Listas
+  </Text>
 
+  <TextInput
+    placeholder="Nome da nova lista..."
+    placeholderTextColor="#999"
+    value={novaLista}
+    onChangeText={setNovaLista}
+    style={{
+      backgroundColor: '#251A30',
+      color: '#FFFFFF',
+      padding: 14,
+      borderRadius: 10,
+      marginBottom: 10,
+    }}
+  />
+
+  <TouchableOpacity
+onPress={criarNovaLista}
+    style={{
+      backgroundColor: '#8A2BE2',
+      padding: 13,
+      borderRadius: 10,
+      marginBottom: 15,
+    }}
+  >
+    <Text style={{
+      color: '#FFFFFF',
+      textAlign: 'center',
+      fontWeight: 'bold',
+    }}>
+      + Criar lista
+    </Text>
+  </TouchableOpacity>
+
+  {listas.map((lista) => (
+  <View
+    key={lista.id}
+    style={{
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 8,
+      gap: 8,
+    }}
+  >
+    <TouchableOpacity
+      onPress={() => setListaSelecionada(lista.id)}
+      style={{
+        backgroundColor: listaSelecionada === lista.id
+          ? '#8A2BE2'
+          : '#251A30',
+        padding: 14,
+        borderRadius: 10,
+        flex: 1,
+      }}
+    >
+      <Text style={{ color: '#FFFFFF', fontSize: 15 }}>
+        {lista.nome}
+      </Text>
+    </TouchableOpacity>
+
+    <TouchableOpacity
+      onPress={() => editarLista(lista)}
+      style={{
+        backgroundColor: '#54236B',
+        padding: 14,
+        borderRadius: 10,
+      }}
+    >
+      <Text style={{ color: '#FFFFFF' }}>✏️</Text>
+    </TouchableOpacity>
+    <TouchableOpacity
+  onPress={() => excluirListaDaTela(lista.id)}
+  style={{
+    backgroundColor: '#8B2635',
+    padding: 14,
+    borderRadius: 10,
+  }}
+>
+  <Text style={{ color: '#FFFFFF' }}>🗑️</Text>
+</TouchableOpacity>
+  </View>
+))}
+</View>
+{listaSelecionada !== null && (
+  <View style={{ marginBottom: 25 }}>
+    <Text style={{
+      color: '#FFFFFF',
+      fontSize: 20,
+      fontWeight: 'bold',
+      marginBottom: 15,
+    }}>
+      Filmes da lista selecionada
+    </Text>
+
+    {filmesDaLista.length === 0 ? (
+      <Text style={{ color: '#999' }}>
+        Nenhum filme adicionado a esta lista ainda.
+      </Text>
+    ) : (
+      filmesDaLista.map((filme) => (
+        <View
+          key={filme.id}
+          style={{
+            backgroundColor: '#251A30',
+            padding: 12,
+            borderRadius: 10,
+            marginBottom: 8,
+          }}
+        >
+          <Text style={{ color: '#FFFFFF', fontSize: 15 }}>
+            {filme.titulo}
+          </Text>
+          <TouchableOpacity
+  onPress={() => excluirFilmeDaLista(filme.filme_id)}
+  style={{
+    backgroundColor: '#8B2635',
+    padding: 8,
+    borderRadius: 8,
+    marginTop: 8,
+  }}
+>
+  <Text style={{ color: '#FFFFFF', textAlign: 'center' }}>
+    Remover filme
+  </Text>
+</TouchableOpacity>
+        </View>
+        
+      ))
+    )}
+  </View>
+)}
+{/* MEUS FAVORITOS */}
+<View style={{ marginTop: 30, marginBottom: 25 }}>
+  <Text style={{
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginBottom: 15,
+  }}>
+    ❤️ Meus Favoritos
+  </Text>
+
+  {filmesFavoritosSalvos.length === 0 ? (
+    <Text style={{ color: '#999' }}>
+      Você ainda não tem filmes favoritos.
+    </Text>
+  ) : (
+    filmesFavoritosSalvos.map((filme) => (
+      <View
+        key={filme.filme_id}
+        style={{
+          backgroundColor: '#251A30',
+          padding: 12,
+          borderRadius: 10,
+          marginBottom: 12,
+        }}
+      >
+        <Text style={{
+          color: '#FFFFFF',
+          fontSize: 17,
+          fontWeight: 'bold',
+        }}>
+          {filme.titulo}
+        </Text>
+
+        <Text style={{ color: '#FFD700', marginTop: 5 }}>
+          ★ {filme.nota?.toFixed(1)}
+        </Text>
+
+        <TextInput
+          placeholder="Escreva uma observação sobre o filme..."
+          placeholderTextColor="#999"
+          value={observacoes[filme.filme_id] || ''}
+          onChangeText={(texto) => {
+            setObservacoes((atuais) => ({
+              ...atuais,
+              [filme.filme_id]: texto,
+            }));
+          }}
+          onBlur={() => {
+            atualizarObservacao(
+              filme.filme_id,
+              observacoes[filme.filme_id] || ''
+            );
+          }}
+          style={{
+            backgroundColor: '#382442',
+            color: '#FFFFFF',
+            padding: 10,
+            borderRadius: 8,
+            marginTop: 10,
+          }}
+        />
+        <TouchableOpacity
+  onPress={() => alternarFavorito(filme.filme_id)}
+  style={{
+    backgroundColor: '#6B1D40',
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 10,
+  }}
+>
+  <Text style={{ color: '#FFFFFF', textAlign: 'center' }}>
+    Remover dos favoritos
+  </Text>
+</TouchableOpacity>
+      </View>
+    ))
+  )}
+</View>
+{/* AVALIAÇÕES */}
+<View style={{ marginTop: 30, marginBottom: 25 }}>
+  <Text style={{ color: '#FFFFFF', fontSize: 22, fontWeight: 'bold', marginBottom: 15 }}>
+    ⭐ Minhas Avaliações
+  </Text>
+
+  {avaliacoes.length === 0 ? (
+    <Text style={{ color: '#999' }}>Nenhuma avaliação ainda.</Text>
+  ) : (
+    avaliacoes.map((item) => (
+      <View key={item.id} style={{ backgroundColor: '#251A30', padding: 12, borderRadius: 10, marginBottom: 10 }}>
+        <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 17 }}>
+          {item.titulo}
+        </Text>
+        <Text style={{ color: '#FFD700', marginTop: 5 }}>
+          Nota: {item.nota}/10
+        </Text>
+        <Text style={{ color: '#FFFFFF', marginTop: 5 }}>
+          {item.comentario}
+        </Text>
+        <View style={{ flexDirection: 'row', marginTop: 10, gap: 10 }}>
+  <TouchableOpacity
+    onPress={() => editarAvaliacao(item)}
+    style={{ backgroundColor: '#6B2D91', padding: 8, borderRadius: 8 }}
+  >
+    <Text style={{ color: '#FFFFFF' }}>Editar</Text>
+  </TouchableOpacity>
+
+  <TouchableOpacity
+    onPress={() => removerAvaliacao(item.id)}
+    style={{ backgroundColor: '#8B1E3F', padding: 8, borderRadius: 8 }}
+  >
+    <Text style={{ color: '#FFFFFF' }}>Excluir</Text>
+  </TouchableOpacity>
+</View>
+      </View>
+    ))
+  )}
+</View>
           {/* ROLETA */}
           <View style={styles.roulette}>
             <Text style={styles.rouletteEmoji}>🎲</Text>
