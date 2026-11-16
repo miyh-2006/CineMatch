@@ -8,13 +8,14 @@ export interface FavoritoDB {
   nota: number;
   observacao: string;
 }
-let banco: SQLite.SQLiteDatabase | null = null;
 
+let banco: SQLite.SQLiteDatabase | null = null;
 let inicializando: Promise<SQLite.SQLiteDatabase> | null = null;
+
+// CONEXÃO E CRIAÇÃO DAS TABELAS
+
 export async function conectarBanco() {
-  if (banco) {
-    return banco;
-  }
+  if (banco) return banco;
 
   if (!inicializando) {
     inicializando = (async () => {
@@ -42,13 +43,14 @@ export async function conectarBanco() {
           titulo TEXT NOT NULL,
           poster_path TEXT
         );
+
         CREATE TABLE IF NOT EXISTS avaliacoes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  filme_id INTEGER NOT NULL,
-  titulo TEXT NOT NULL,
-  nota REAL NOT NULL,
-  comentario TEXT
-);
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          filme_id INTEGER NOT NULL,
+          titulo TEXT NOT NULL,
+          nota REAL NOT NULL,
+          comentario TEXT
+        );
       `);
 
       banco = db;
@@ -82,12 +84,16 @@ export async function salvarFavorito(filme: FavoritoDB) {
 
 export async function listarFavoritos() {
   const db = await conectarBanco();
-  return await db.getAllAsync<FavoritoDB>(
+
+  return db.getAllAsync<FavoritoDB>(
     'SELECT * FROM favoritos'
   );
 }
 
-export async function atualizarObservacao(id: number, observacao: string) {
+export async function atualizarObservacao(
+  id: number,
+  observacao: string
+) {
   const db = await conectarBanco();
 
   await db.runAsync(
@@ -111,20 +117,16 @@ export async function removerFavorito(id: number) {
 export async function criarLista(nome: string) {
   const db = await conectarBanco();
 
-  console.log('Banco:', db);
-  console.log('Nome recebido:', nome);
-
-  await db.execAsync(
-    `INSERT INTO listas (nome) VALUES ('${nome.replace(/'/g, "''")}')`
+  await db.runAsync(
+    'INSERT INTO listas (nome) VALUES (?)',
+    nome
   );
-
-  console.log('Lista inserida com sucesso!');
 }
 
 export async function listarListas() {
   const db = await conectarBanco();
 
-  return await db.getAllAsync<{ id: number; nome: string }>(
+  return db.getAllAsync<{ id: number; nome: string }>(
     'SELECT * FROM listas'
   );
 }
@@ -132,25 +134,24 @@ export async function listarListas() {
 export async function renomearLista(id: number, nome: string) {
   const db = await conectarBanco();
 
-  const idSeguro = Number(id);
-  const nomeSeguro = nome.replace(/'/g, "''");
-
-  await db.execAsync(
-    `UPDATE listas SET nome = '${nomeSeguro}' WHERE id = ${idSeguro}`
+  await db.runAsync(
+    'UPDATE listas SET nome = ? WHERE id = ?',
+    nome,
+    id
   );
 }
 
 export async function excluirLista(id: number) {
   const db = await conectarBanco();
 
-  const idSeguro = Number(id);
-
-  await db.execAsync(
-    `DELETE FROM filmes_lista WHERE lista_id = ${idSeguro}`
+  await db.runAsync(
+    'DELETE FROM filmes_lista WHERE lista_id = ?',
+    id
   );
 
-  await db.execAsync(
-    `DELETE FROM listas WHERE id = ${idSeguro}`
+  await db.runAsync(
+    'DELETE FROM listas WHERE id = ?',
+    id
   );
 }
 
@@ -178,8 +179,9 @@ export async function adicionarFilmeALista(
 export async function listarFilmesDaLista(listaId: number) {
   const db = await conectarBanco();
 
-  return await db.getAllAsync(
-    `SELECT * FROM filmes_lista WHERE lista_id = ${Number(listaId)}`
+  return db.getAllAsync(
+    'SELECT * FROM filmes_lista WHERE lista_id = ?',
+    listaId
   );
 }
 
@@ -195,6 +197,9 @@ export async function removerFilmeDaLista(
     filmeId
   );
 }
+
+// AVALIAÇÕES
+
 export async function salvarAvaliacao(
   filmeId: number,
   titulo: string,
@@ -204,17 +209,24 @@ export async function salvarAvaliacao(
   const db = await conectarBanco();
 
   await db.runAsync(
-    'INSERT INTO avaliacoes (filme_id, titulo, nota, comentario) VALUES (?, ?, ?, ?)',
-    [filmeId, titulo, nota, comentario]
+    `INSERT INTO avaliacoes
+    (filme_id, titulo, nota, comentario)
+    VALUES (?, ?, ?, ?)`,
+    filmeId,
+    titulo,
+    nota,
+    comentario
   );
 }
+
 export async function listarAvaliacoes() {
   const db = await conectarBanco();
 
-  return await db.getAllAsync(
+  return db.getAllAsync(
     'SELECT * FROM avaliacoes'
   );
 }
+
 export async function atualizarAvaliacao(
   id: number,
   nota: number,
@@ -224,29 +236,31 @@ export async function atualizarAvaliacao(
 
   await db.runAsync(
     'UPDATE avaliacoes SET nota = ?, comentario = ? WHERE id = ?',
-    [nota, comentario, id]
+    nota,
+    comentario,
+    id
   );
 }
+
 export async function excluirAvaliacao(id: number) {
   const db = await conectarBanco();
 
   await db.runAsync(
     'DELETE FROM avaliacoes WHERE id = ?',
-    [id]
+    id
   );
 }
-// RESTAURAR DADOS RECEBIDOS DO FIRESTORE
+
+// RESTAURAR DADOS DO FIRESTORE
 
 export async function restaurarDados(dados: any) {
   const db = await conectarBanco();
 
-  // Limpa os dados locais antigos
   await db.runAsync('DELETE FROM filmes_lista');
   await db.runAsync('DELETE FROM listas');
   await db.runAsync('DELETE FROM favoritos');
   await db.runAsync('DELETE FROM avaliacoes');
 
-  // Restaura favoritos
   for (const favorito of dados.favoritos || []) {
     await db.runAsync(
       `INSERT INTO favoritos
@@ -261,7 +275,6 @@ export async function restaurarDados(dados: any) {
     );
   }
 
-  // Restaura listas e seus filmes
   for (const lista of dados.listas || []) {
     await db.runAsync(
       'INSERT INTO listas (id, nome) VALUES (?, ?)',
@@ -282,7 +295,6 @@ export async function restaurarDados(dados: any) {
     }
   }
 
-  // Restaura avaliações
   for (const avaliacao of dados.avaliacoes || []) {
     await db.runAsync(
       `INSERT INTO avaliacoes

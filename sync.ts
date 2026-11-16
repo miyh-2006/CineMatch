@@ -44,15 +44,12 @@ export async function sincronizarDados() {
 
   const uid = usuario.uid;
 
-  // Marca a sincronização como pendente antes de tentar enviar.
   marcarPendente(uid);
 
-  // Se estiver sem internet, mantém os dados locais.
   if (
     typeof navigator !== 'undefined' &&
     !navigator.onLine
   ) {
-    console.log('Sem internet. Dados aguardando sincronização.');
     return;
   }
 
@@ -79,15 +76,9 @@ export async function sincronizarDados() {
       { merge: true }
     );
 
-    // Só limpa a pendência depois que o envio termina.
     limparPendencia(uid);
-
-    console.log('Dados sincronizados com sucesso!');
   } catch (error) {
-    console.log(
-      'Falha na sincronização. Os dados continuam salvos localmente.',
-      error
-    );
+    console.error('Erro ao sincronizar os dados:', error);
   }
 }
 
@@ -98,21 +89,15 @@ export async function sincronizarAoEntrar() {
 
   const uid = usuario.uid;
 
-  // Se existem alterações locais pendentes, envia primeiro.
   if (existePendencia(uid)) {
-    console.log('Encontradas alterações pendentes.');
-
     await sincronizarDados();
-
     return;
   }
 
-  // Sem internet, não tenta recuperar dados da nuvem.
   if (
     typeof navigator !== 'undefined' &&
     !navigator.onLine
   ) {
-    console.log('Sem internet. Mantendo dados locais.');
     return;
   }
 
@@ -122,14 +107,10 @@ export async function sincronizarAoEntrar() {
 
     if (documento.exists()) {
       await restaurarDados(documento.data());
-
-      console.log('Dados recuperados do Firestore!');
     } else {
       await sincronizarDados();
-
-      console.log('Primeiros dados enviados ao Firestore!');
     }
   } catch (error) {
-    console.log('Não foi possível recuperar os dados da nuvem:', error);
+    console.error('Erro ao recuperar os dados da nuvem:', error);
   }
 }

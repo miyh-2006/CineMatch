@@ -68,6 +68,21 @@ const generos: Record<number, string> = {
   14: 'Fantasia',
 };
 
+// Valida o formato do e-mail, incluindo domínio e extensão (ex.: .com ou .com.br).
+const EMAIL_VALIDO = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}(?:\.[A-Za-z]{2,})?$/;
+
+// Regras de segurança exigidas somente para novas contas.
+function validarSenha(senha: string) {
+  return {
+    tamanho: senha.length >= 8,
+    maiuscula: /[A-Z]/.test(senha),
+    minuscula: /[a-z]/.test(senha),
+    numero: /[0-9]/.test(senha),
+    especial: /[^A-Za-z0-9]/.test(senha),
+  };
+}
+
+// Componente principal: guarda os dados da tela e coordena as funcionalidades do app.
 export default function App() {
   const [filmes, setFilmes] = useState<Filme[]>([]);
   const [busca, setBusca] = useState('');
@@ -85,13 +100,19 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [modoCadastro, setModoCadastro] = useState(false);
+  const [erroAuth, setErroAuth] = useState('');
+  const [carregandoAuth, setCarregandoAuth] = useState(false);
+  const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [aba, setAba] = useState<'inicio' | 'favoritos' | 'listas' | 'avaliacoes'>('inicio');
 
+  // Inicializa o SQLite, banco local usado para manter os dados no aparelho.
   useEffect(() => {
     conectarBanco().catch((error) => {
       console.error('Erro ao conectar ao SQLite:', error);
       alert('Não foi possível iniciar o banco de dados local.');
     });
   }, []);
+// Observa o login do Firebase e carrega os dados do usuário.
 useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setUsuario(user);
@@ -132,6 +153,7 @@ useEffect(() => {
     width >= 1100 ? '18%' :
     width >= 700 ? '23%' : '48%';
 
+  // Busca os filmes populares na API do TMDB.
   useEffect(() => {
     async function carregarFilmes() {
       try {
@@ -169,6 +191,7 @@ useEffect(() => {
     window.removeEventListener('online', quandoInternetVoltar);
   };
 }, []);
+// CRUD de listas: cria a lista e atualiza a interface.
 async function criarNovaLista() {
   if (!novaLista.trim()) return;
 
@@ -298,6 +321,7 @@ useEffect(() => {
 
   carregarAvaliacoes();
 }, []);
+// CRUD de favoritos: adiciona ou remove e atualiza a cópia na nuvem.
 async function alternarFavorito(id: number) {
   try {
     const jaFavoritado = favoritos.includes(id);
@@ -334,6 +358,7 @@ async function alternarFavorito(id: number) {
   }
 }
 
+// Registra uma avaliação e envia a alteração para sincronização.
 async function avaliarFilme(filme: Filme) {
   const nota = Number(window.prompt('Dê uma nota de 0 a 10:'));
 
@@ -361,17 +386,47 @@ async function avaliarFilme(filme: Filme) {
   }
 }
 
+// Faz login ou cadastro e apresenta os problemas dentro do próprio formulário.
 async function acessarConta() {
-  try {
-    if (modoCadastro) {
-      await cadastrar(email, senha);
-      alert('Conta criada com sucesso!');
-    } else {
-      await login(email, senha);
-      alert('Login realizado com sucesso!');
+  setErroAuth('');
+  const emailLimpo = email.trim();
+
+  if (!EMAIL_VALIDO.test(emailLimpo)) {
+    setErroAuth('Confira o e-mail: informe usuário, @, domínio e extensão (ex.: nome@email.com).');
+    return;
+  }
+
+  // A senha forte é exigida no cadastro; contas antigas continuam podendo entrar.
+  if (modoCadastro) {
+    const regras = validarSenha(senha);
+    if (Object.values(regras).some((regra) => !regra)) {
+      setErroAuth('Complete todos os requisitos da senha antes de criar sua conta.');
+      return;
     }
+  } else if (!senha) {
+    setErroAuth('Digite sua senha para entrar.');
+    return;
+  }
+
+  setCarregandoAuth(true);
+  try {
+    if (modoCadastro) await cadastrar(emailLimpo, senha);
+    else await login(emailLimpo, senha);
   } catch (error: any) {
-    alert('Erro: ' + error.message);
+    const codigo = error?.code;
+    const mensagens: Record<string, string> = {
+      'auth/invalid-email': 'Digite um e-mail válido.',
+      'auth/email-already-in-use': 'Este e-mail já possui uma conta. Tente entrar.',
+      'auth/weak-password': 'A senha não atende aos requisitos de segurança.',
+      'auth/invalid-credential': 'E-mail ou senha incorretos.',
+      'auth/wrong-password': 'E-mail ou senha incorretos.',
+      'auth/user-not-found': 'E-mail ou senha incorretos.',
+      'auth/too-many-requests': 'Muitas tentativas. Aguarde um pouco e tente novamente.',
+      'auth/network-request-failed': 'Falha de conexão. Verifique sua internet.',
+    };
+    setErroAuth(mensagens[codigo] || 'Não foi possível acessar sua conta. Tente novamente.');
+  } finally {
+    setCarregandoAuth(false);
   }
 }
 
@@ -469,78 +524,89 @@ const filmesFiltrados = filmes.filter((filme) =>
   const destaque = filmes[0];
 
   if (!usuario) {
-  return (
-    <View style={{
-      flex: 1,
-      backgroundColor: '#12091A',
-      justifyContent: 'center',
-      padding: 30,
-    }}>
-      <Text style={{
-        color: '#FFFFFF',
-        fontSize: 32,
-        fontWeight: 'bold',
-        textAlign: 'center',
-        marginBottom: 30,
-      }}>
-        🎬 CineMatch
-      </Text>
+    const requisitosSenha = validarSenha(senha);
+    const requisitos = [
+      ['Pelo menos 8 caracteres', requisitosSenha.tamanho],
+      ['Uma letra maiúscula', requisitosSenha.maiuscula],
+      ['Uma letra minúscula', requisitosSenha.minuscula],
+      ['Um número', requisitosSenha.numero],
+      ['Um caractere especial (!@#$...)', requisitosSenha.especial],
+    ] as const;
 
-      <TextInput
-        placeholder="E-mail"
-        placeholderTextColor="#999"
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-        style={{
-          backgroundColor: '#251A30',
-          color: '#FFFFFF',
-          padding: 15,
-          borderRadius: 10,
-          marginBottom: 15,
-        }}
-      />
+    return (
+      <ScrollView contentContainerStyle={styles.loginScroll} keyboardShouldPersistTaps="handled">
+        <StatusBar barStyle="light-content" />
+        <View style={styles.loginContainer}>
+          <View style={styles.loginGlow} />
+          <View style={styles.loginCard}>
+            <Image source={require('./assets/claquete.png')} style={styles.loginLogoImage} resizeMode="contain" />
+            <Text style={styles.loginTitle}>Cine<Text style={styles.logoPink}>Match</Text></Text>
+            <Text style={styles.loginSubtitle}>SEU UNIVERSO DE FILMES</Text>
+            <Text style={styles.loginWelcome}>{modoCadastro ? 'Crie sua conta' : 'Bem-vindo de volta'}</Text>
+            <Text style={styles.loginDescription}>
+              {modoCadastro ? 'Entre para salvar seus filmes favoritos.' : 'Entre e continue descobrindo histórias.'}
+            </Text>
 
-      <TextInput
-        placeholder="Senha"
-        placeholderTextColor="#999"
-        value={senha}
-        onChangeText={setSenha}
-        secureTextEntry
-        style={{
-          backgroundColor: '#251A30',
-          color: '#FFFFFF',
-          padding: 15,
-          borderRadius: 10,
-          marginBottom: 15,
-        }}
-      />
+            <Text style={styles.fieldLabel}>E-MAIL</Text>
+            <TextInput
+              placeholder="seuemail@exemplo.com"
+              placeholderTextColor="#82758D"
+              value={email}
+              onChangeText={(valor) => { setEmail(valor); setErroAuth(''); }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              style={styles.loginInput}
+            />
+            {!!email && !EMAIL_VALIDO.test(email.trim()) && (
+              <Text style={styles.fieldFeedback}>Informe um e-mail completo, com @, domínio e extensão.</Text>
+            )}
 
-      <TouchableOpacity
-        onPress={acessarConta}
-        style={{
-          backgroundColor: '#8B3DAD',
-          padding: 15,
-          borderRadius: 10,
-        }}
-      >
-        <Text style={{ color: '#FFFFFF', textAlign: 'center', fontWeight: 'bold' }}>
-          {modoCadastro ? 'Criar conta' : 'Entrar'}
-        </Text>
-      </TouchableOpacity>
+            <Text style={styles.fieldLabel}>SENHA</Text>
+            <View style={styles.passwordWrapper}>
+              <TextInput
+                placeholder="Digite sua senha"
+                placeholderTextColor="#82758D"
+                value={senha}
+                onChangeText={(valor) => { setSenha(valor); setErroAuth(''); }}
+                secureTextEntry={!mostrarSenha}
+                autoCapitalize="none"
+                style={styles.passwordInput}
+              />
+              <TouchableOpacity onPress={() => setMostrarSenha(!mostrarSenha)} style={styles.showPasswordButton}>
+                <Text style={styles.showPasswordText}>{mostrarSenha ? 'Ocultar' : 'Mostrar'}</Text>
+              </TouchableOpacity>
+            </View>
 
-      <TouchableOpacity
-        onPress={() => setModoCadastro(!modoCadastro)}
-        style={{ marginTop: 20 }}
-      >
-        <Text style={{ color: '#FFFFFF', textAlign: 'center' }}>
-          {modoCadastro ? 'Já tenho conta? Entrar' : 'Não tenho conta? Cadastrar'}
-        </Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
+            {modoCadastro ? (
+              <View style={styles.passwordRules}>
+                <Text style={styles.rulesTitle}>Sua senha precisa ter:</Text>
+                {requisitos.map(([texto, valido]) => (
+                  <Text key={texto} style={[styles.ruleItem, valido && styles.ruleValid]}>
+                    {valido ? '✓' : '○'}  {texto}
+                  </Text>
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.loginHint}>Use a senha cadastrada na sua conta.</Text>
+            )}
+
+            {!!erroAuth && <Text style={styles.loginError}>⚠  {erroAuth}</Text>}
+
+            <TouchableOpacity onPress={acessarConta} disabled={carregandoAuth} style={[styles.loginButton, carregandoAuth && styles.buttonDisabled]}>
+              {carregandoAuth ? <ActivityIndicator color="#FFFFFF" /> :
+                <Text style={styles.loginButtonText}>{modoCadastro ? 'CRIAR MINHA CONTA' : 'ENTRAR'}</Text>}
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => { setModoCadastro(!modoCadastro); setErroAuth(''); }} style={styles.loginSwitchButton}>
+              <Text style={styles.loginSwitch}>{modoCadastro ? 'Já tem uma conta? Entrar' : 'Ainda não tem conta? Criar conta'}</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.loginFooter}>CINEMATCH • DESCUBRA, SALVE E AVALIE</Text>
+        </View>
+      </ScrollView>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -548,28 +614,26 @@ const filmesFiltrados = filmes.filter((filme) =>
 
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
-          <TouchableOpacity
-  onPress={sairDaConta}
-  style={{
-    backgroundColor: '#6B2D91',
-    padding: 10,
-    borderRadius: 8,
-    alignSelf: 'flex-end',
-    marginBottom: 15,
-  }}
->
-  <Text style={{ color: '#FFFFFF' }}>Sair da conta</Text>
-</TouchableOpacity>
-
-          {/* CABEÇALHO */}
-          <View style={styles.header}>
-            <Text style={styles.logo}>
-              Cine<Text style={styles.logoPink}>Match</Text>
-            </Text>
-
-            <Text style={styles.profile}>●</Text>
+          {/* Barra superior: marca e navegação principal do aplicativo. */}
+          <View style={styles.topBar}>
+            <View style={styles.brand}>
+              <Image source={require('./assets/claquete.png')} style={styles.brandLogoImage} resizeMode="contain" />
+              <Text style={styles.logo}>Cine<Text style={styles.logoPink}>Match</Text></Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabs}>
+              {([['inicio', '⌂  Início'], ['favoritos', '♥  Favoritos'], ['listas', '▤  Minhas listas'], ['avaliacoes', '★  Avaliações']] as const).map(([id, nome]) => (
+                <TouchableOpacity key={id} onPress={() => setAba(id)} style={[styles.tab, aba === id && styles.tabAtiva]}>
+                  <Text style={[styles.tabTexto, aba === id && styles.tabTextoAtivo]}>{nome}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity onPress={sairDaConta} style={styles.logoutButton}>
+              <Text style={styles.logoutText}>Sair</Text>
+            </TouchableOpacity>
           </View>
 
+          {aba === 'inicio' && (
+            <>
           {/* APRESENTAÇÃO */}
           <Text style={styles.subtitle}>
             SEU UNIVERSO DE FILMES
@@ -728,6 +792,10 @@ const filmesFiltrados = filmes.filter((filme) =>
               ))}
             </View>
           )}
+            </>
+          )}
+          {aba === 'listas' && (
+            <>
 {/* MINHAS LISTAS */}
 <View style={{ marginTop: 30, marginBottom: 25 }}>
   <Text style={{
@@ -868,6 +936,10 @@ onPress={criarNovaLista}
     )}
   </View>
 )}
+            </>
+          )}
+          {aba === 'favoritos' && (
+            <>
 {/* MEUS FAVORITOS */}
 <View style={{ marginTop: 30, marginBottom: 25 }}>
   <Text style={{
@@ -956,6 +1028,10 @@ onPress={criarNovaLista}
     ))
   )}
 </View>
+            </>
+          )}
+          {aba === 'avaliacoes' && (
+            <>
 {/* AVALIAÇÕES */}
 <View style={{ marginTop: 30, marginBottom: 25 }}>
   <Text style={{ color: '#FFFFFF', fontSize: 22, fontWeight: 'bold', marginBottom: 15 }}>
@@ -995,24 +1071,9 @@ onPress={criarNovaLista}
     ))
   )}
 </View>
-          {/* ROLETA */}
-          <View style={styles.roulette}>
-            <Text style={styles.rouletteEmoji}>🎲</Text>
-
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rouletteTitle}>
-                Sem ideia do que assistir?
-              </Text>
-
-              <Text style={styles.rouletteText}>
-                Deixe o CineMatch escolher por você!
-              </Text>
-            </View>
-
-            <Text style={styles.arrow}>➜</Text>
-          </View>
-
-          {/* RODAPÉ */}
+                      </>
+          )}
+{/* RODAPÉ */}
           <View style={styles.footer}>
             <Text style={styles.footerText}>
               CineMatch © 2026
@@ -1034,6 +1095,47 @@ onPress={criarNovaLista}
 }
 
 const styles = StyleSheet.create({
+  // Tela de autenticação: cartão central, campos claros e feedback de validação.
+  loginScroll: { flexGrow: 1, backgroundColor: '#0B0712' },
+  loginContainer: { flex: 1, minHeight: 700, backgroundColor: '#0B0712', justifyContent: 'center', alignItems: 'center', padding: 22, overflow: 'hidden' },
+  loginGlow: { position: 'absolute', width: 360, height: 360, borderRadius: 180, backgroundColor: '#35134D', opacity: 0.35, top: -120, right: -120 },
+  loginCard: { width: '100%', maxWidth: 460, backgroundColor: '#171020', borderColor: '#382448', borderWidth: 1, borderRadius: 24, padding: 28, shadowColor: '#D65AFF', shadowOpacity: 0.18, shadowRadius: 24, elevation: 10 },
+  loginLogoImage: { width: 104, height: 104, alignSelf: 'center', marginBottom: 10, borderRadius: 22 },
+  loginTitle: { color: '#FFFFFF', fontSize: 34, fontWeight: 'bold', textAlign: 'center' },
+  loginSubtitle: { color: '#D65AFF', textAlign: 'center', letterSpacing: 3, marginTop: 8, marginBottom: 28, fontSize: 10 },
+  loginWelcome: { color: '#FFFFFF', fontSize: 22, fontWeight: 'bold', marginBottom: 5 },
+  loginDescription: { color: '#A99CAF', fontSize: 13, marginBottom: 22 },
+  fieldLabel: { color: '#D9C5E5', fontSize: 10, fontWeight: 'bold', letterSpacing: 1.5, marginTop: 12, marginBottom: 7 },
+  loginInput: { backgroundColor: '#241A30', color: '#FFFFFF', padding: 15, borderRadius: 12, borderWidth: 1, borderColor: '#493258', fontSize: 14 },
+  passwordWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#241A30', borderRadius: 12, borderWidth: 1, borderColor: '#493258' },
+  passwordInput: { flex: 1, color: '#FFFFFF', padding: 15, fontSize: 14 },
+  showPasswordButton: { paddingHorizontal: 14, paddingVertical: 12 },
+  showPasswordText: { color: '#D65AFF', fontSize: 12, fontWeight: 'bold' },
+  fieldFeedback: { color: '#F0B45B', fontSize: 11, marginTop: 6 },
+  passwordRules: { backgroundColor: '#21172B', borderRadius: 12, padding: 13, marginTop: 12, borderWidth: 1, borderColor: '#392747' },
+  rulesTitle: { color: '#DCCBE5', fontSize: 12, fontWeight: 'bold', marginBottom: 7 },
+  ruleItem: { color: '#9D91A8', fontSize: 11, marginTop: 4 },
+  ruleValid: { color: '#83D9A2' },
+  loginHint: { color: '#A99CAF', fontSize: 12, marginTop: 8, marginBottom: 4 },
+  loginError: { color: '#FFB1BD', backgroundColor: '#3A1828', borderWidth: 1, borderColor: '#71334A', padding: 12, borderRadius: 10, marginTop: 13, fontSize: 12 },
+  loginButton: { backgroundColor: '#963CC0', padding: 16, borderRadius: 12, marginTop: 20, minHeight: 52, justifyContent: 'center', shadowColor: '#C44DFF', shadowOpacity: 0.25, shadowRadius: 12, elevation: 5 },
+  buttonDisabled: { opacity: 0.65 },
+  loginButtonText: { color: '#FFFFFF', textAlign: 'center', fontWeight: 'bold', letterSpacing: 1 },
+  loginSwitchButton: { marginTop: 20, padding: 8 },
+  loginSwitch: { color: '#E3B5F7', textAlign: 'center', fontSize: 13 },
+  loginFooter: { color: '#74647F', fontSize: 9, letterSpacing: 2, marginTop: 22 },
+  topBar: { marginTop: 24, marginBottom: 25, flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap', padding: 14, backgroundColor: '#15101D', borderRadius: 18, borderWidth: 1, borderColor: '#2D2039' },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  brandLogoImage: { width: 44, height: 44, borderRadius: 10 },
+  brandIcon: { width: 38, height: 38, borderRadius: 12, backgroundColor: '#8B3DAD', alignItems: 'center', justifyContent: 'center' },
+  brandIconText: { color: '#FFFFFF', fontSize: 17 },
+  tabs: { alignItems: 'center', gap: 6 },
+  tab: { paddingVertical: 11, paddingHorizontal: 14, borderRadius: 11, backgroundColor: '#211B2B', borderWidth: 1, borderColor: '#30233C' },
+  tabAtiva: { backgroundColor: '#71349A', borderColor: '#B65BE0' },
+  tabTexto: { color: '#B9AFC1', fontSize: 13 },
+  tabTextoAtivo: { color: '#FFFFFF', fontWeight: 'bold' },
+  logoutButton: { paddingVertical: 9, paddingHorizontal: 12, borderRadius: 8, backgroundColor: '#382442' },
+  logoutText: { color: '#FFFFFF', fontSize: 12 },
   container: {
     flex: 1,
     backgroundColor: '#0B0911',
@@ -1169,6 +1271,11 @@ const styles = StyleSheet.create({
 
   movieCard: {
     marginBottom: 28,
+    padding: 9,
+    backgroundColor: '#17121F',
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: '#30233C',
   },
 
   poster: {
@@ -1176,6 +1283,8 @@ const styles = StyleSheet.create({
     height: 260,
     backgroundColor: '#261B35',
     borderRadius: 13,
+    borderWidth: 1,
+    borderColor: '#493258',
   },
 
   movieName: {
@@ -1201,38 +1310,6 @@ const styles = StyleSheet.create({
     color: '#FF8A9B',
     fontSize: 14,
     marginVertical: 30,
-  },
-
-  roulette: {
-    backgroundColor: '#24152F',
-    padding: 20,
-    borderRadius: 15,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 15,
-    marginBottom: 30,
-  },
-
-  rouletteEmoji: {
-    fontSize: 35,
-    marginRight: 15,
-  },
-
-  rouletteTitle: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 15,
-  },
-
-  rouletteText: {
-    color: '#B9A8C3',
-    fontSize: 12,
-    marginTop: 5,
-  },
-
-  arrow: {
-    color: '#D65AFF',
-    fontSize: 25,
   },
 
   footer: {
