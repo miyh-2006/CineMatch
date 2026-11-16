@@ -87,27 +87,45 @@ export default function App() {
   const [modoCadastro, setModoCadastro] = useState(false);
 
   useEffect(() => {
-  alert('O teste do banco começou!');
-  conectarBanco()
-    .then(() => alert('Banco SQLite conectado!'))
-    .catch((error) => alert('Erro no SQLite: ' + String(error)));
-}, []);
+    conectarBanco().catch((error) => {
+      console.error('Erro ao conectar ao SQLite:', error);
+      alert('Não foi possível iniciar o banco de dados local.');
+    });
+  }, []);
 useEffect(() => {
-  const unsubscribe = onAuthStateChanged(auth, async (user) => {
-    setUsuario(user);
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setUsuario(user);
 
-    if (user) {
-      try {
-        await sincronizarAoEntrar();
-        console.log('Dados sincronizados com sucesso!');
-      } catch (error) {
-        console.error('Erro na sincronização:', error);
+      if (user) {
+        try {
+          await sincronizarAoEntrar();
+
+          // Atualiza a tela com os dados locais após a sincronização inicial.
+          const [listasSalvas, favoritosSalvos, avaliacoesSalvas] =
+            await Promise.all([
+              listarListas(),
+              listarFavoritos(),
+              listarAvaliacoes(),
+            ]);
+
+          setListas(listasSalvas);
+          setFilmesFavoritosSalvos(favoritosSalvos);
+          setFavoritos(favoritosSalvos.map((filme) => filme.filme_id));
+          setAvaliacoes(avaliacoesSalvas);
+
+          const mapa: Record<number, string> = {};
+          favoritosSalvos.forEach((filme) => {
+            mapa[filme.filme_id] = filme.observacao || '';
+          });
+          setObservacoes(mapa);
+        } catch (error) {
+          console.error('Erro na sincronização:', error);
+        }
       }
-    }
-  });
+    });
 
-  return unsubscribe;
-}, []);
+    return unsubscribe;
+  }, []);
   const { width } = useWindowDimensions();
 
   const larguraCard =
@@ -137,8 +155,12 @@ useEffect(() => {
     carregarFilmes();
   }, []);
   useEffect(() => {
+  if (typeof window === 'undefined') return;
+
   function quandoInternetVoltar() {
-    sincronizarDados();
+    sincronizarDados().catch((error) => {
+      console.log('Não foi possível sincronizar os dados:', error);
+    });
   }
 
   window.addEventListener('online', quandoInternetVoltar);
@@ -165,36 +187,44 @@ async function criarNovaLista() {
     alert('Erro ao salvar lista: ' + String(error));
   }
 }
-async function editarLista(id: number, novoNome: string) {
-  if (!novoNome.trim()) return;
+async function editarLista(lista: { id: number; nome: string }) {
+  const novoNome = window.prompt('Digite o novo nome da lista:', lista.nome);
+
+  if (!novoNome || !novoNome.trim()) return;
+async function excluirListaDaTela(listaId: number) {
+  const confirmar = window.confirm(
+    'Tem certeza que deseja excluir esta lista?'
+  );
+
+  if (!confirmar) return;
 
   try {
-    await renomearLista(id, novoNome.trim());
+    await excluirListaBanco(listaId);
 
     const atualizadas = await listarListas();
     setListas(atualizadas);
 
-    sincronizarDados().catch((error) => {
-      console.log('Sincronização pendente:', error);
-    });
+    if (listaSelecionada === listaId) {
+      setListaSelecionada(null);
+      setFilmesDaLista([]);
+    }
+
+    alert('Lista excluída com sucesso!');
   } catch (error) {
     console.error('Erro ao renomear lista:', error);
     alert('Não foi possível renomear a lista.');
   }
 }
-async function excluirListaDaTela(id: number) {
   try {
-    await excluirLista(id);
+    await renomearLista(lista.id, novoNome.trim());
 
     const atualizadas = await listarListas();
     setListas(atualizadas);
 
-    sincronizarDados().catch((error) => {
-      console.log('Sincronização pendente:', error);
-    });
+    alert('Lista renomeada com sucesso!');
   } catch (error) {
-    console.error('Erro ao excluir lista:', error);
-    alert('Não foi possível excluir a lista.');
+    console.error('Erro ao renomear lista:', error);
+    alert('Não foi possível renomear a lista.');
   }
 }
 useEffect(() => {
@@ -249,8 +279,12 @@ useEffect(() => {
 }, []);
 useEffect(() => {
   async function carregarAvaliacoes() {
-    const dados = await listarAvaliacoes();
-    setAvaliacoes(dados);
+    try {
+      const dados = await listarAvaliacoes();
+      setAvaliacoes(dados);
+    } catch (error) {
+      console.error('Erro ao carregar avaliações:', error);
+    }
   }
 
   carregarAvaliacoes();
@@ -337,20 +371,26 @@ async function sairDaConta() {
   setEmail('');
   setSenha('');
 }
-async function editarAvaliacao(id: number, nota: number, comentario: string) {
-  try {
-    await atualizarAvaliacao(id, nota, comentario);
+async function editarAvaliacao(item: any) {
+  const notaTexto = window.prompt('Nova nota:', String(item.nota));
 
-    const atualizadas = await listarAvaliacoes();
-    setAvaliacoes(atualizadas);
+  if (notaTexto === null) return;
 
-    sincronizarDados().catch((error) => {
-      console.log('Sincronização pendente:', error);
-    });
-  } catch (error) {
-    console.error('Erro ao editar avaliação:', error);
-    alert('Não foi possível editar a avaliação.');
+  const nota = Number(notaTexto);
+
+  if (isNaN(nota) || nota < 0 || nota > 10) {
+    alert('Digite uma nota de 0 a 10!');
+    return;
   }
+
+  const comentario = window.prompt('Novo comentário:', item.comentario || '');
+
+  if (comentario === null) return;
+
+  await atualizarAvaliacao(item.id, nota, comentario);
+  await sincronizarDados();
+  setAvaliacoes(await listarAvaliacoes());
+  alert('Avaliação atualizada!');
 }
 async function removerAvaliacao(id: number) {
   if (!window.confirm('Deseja excluir esta avaliação?')) return;
@@ -411,26 +451,6 @@ async function excluirFilmeDaLista(listaId: number, filmeId: number) {
   } catch (error) {
     console.error('Erro ao remover filme da lista:', error);
     alert('Não foi possível remover o filme.');
-  }
-}
-async function excluirListaDaTela(listaId: number) {
-  if (!window.confirm('Deseja excluir esta lista?')) return;
-
-  try {
-    await excluirListaBanco(listaId);
-
-    const atualizadas = await listarListas();
-    setListas(atualizadas);
-
-    if (listaSelecionada === listaId) {
-      setListaSelecionada(null);
-      setFilmesDaLista([]);
-    }
-
-    alert('Lista excluída!');
-  } catch (error) {
-    console.error(error);
-    alert('Erro ao excluir lista.');
   }
 }
 const filmesFiltrados = filmes.filter((filme) =>
@@ -821,7 +841,7 @@ onPress={criarNovaLista}
             {filme.titulo}
           </Text>
           <TouchableOpacity
-  onPress={() => excluirFilmeDaLista(filme.filme_id)}
+  onPress={() => excluirFilmeDaLista(listaSelecionada!, filme.filme_id)}
   style={{
     backgroundColor: '#8B2635',
     padding: 8,
@@ -887,11 +907,20 @@ onPress={criarNovaLista}
               [filme.filme_id]: texto,
             }));
           }}
-          onBlur={() => {
-            atualizarObservacao(
-              filme.filme_id,
-              observacoes[filme.filme_id] || ''
-            );
+          onBlur={async () => {
+            try {
+              await atualizarObservacao(
+                filme.filme_id,
+                observacoes[filme.filme_id] || ''
+              );
+
+              sincronizarDados().catch((error) => {
+                console.log('Sincronização pendente:', error);
+              });
+            } catch (error) {
+              console.error('Erro ao salvar observação:', error);
+              alert('Não foi possível salvar a observação.');
+            }
           }}
           style={{
             backgroundColor: '#382442',
