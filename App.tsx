@@ -104,7 +104,10 @@ export default function App() {
   const [carregandoAuth, setCarregandoAuth] = useState(false);
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [aba, setAba] = useState<'inicio' | 'favoritos' | 'listas' | 'avaliacoes'>('inicio');
-
+// Guarda os filmes encontrados na pesquisa feita no TMDB.
+const [resultadosBusca, setResultadosBusca] = useState<Filme[]>([]);
+const [buscandoFilmes, setBuscandoFilmes] = useState(false);
+const [erroBusca, setErroBusca] = useState('');
   // Inicializa o SQLite, banco local usado para manter os dados no aparelho.
   useEffect(() => {
     conectarBanco().catch((error) => {
@@ -176,6 +179,62 @@ useEffect(() => {
 
     carregarFilmes();
   }, []);
+  // Pesquisa filmes no catálogo do TMDB conforme o usuário digita.
+useEffect(() => {
+  const termo = busca.trim();
+
+  // Se a pesquisa estiver vazia, limpa os resultados.
+  if (!termo) {
+    setResultadosBusca([]);
+    setBuscandoFilmes(false);
+    setErroBusca('');
+    return;
+  }
+
+  let cancelado = false;
+
+  // Aguarda um pouco antes de pesquisar, evitando várias chamadas seguidas.
+  const temporizador = setTimeout(async () => {
+    setBuscandoFilmes(true);
+    setErroBusca('');
+
+    try {
+      // Reaproveita o endereço do servidor, trocando a rota de populares por buscar.
+      const urlBusca = API_URL.replace('/populares', '/buscar');
+    
+      const resposta = await fetch(
+        `${urlBusca}?nome=${encodeURIComponent(termo)}`
+      );
+
+      if (!resposta.ok) {
+        throw new Error('Erro ao pesquisar filmes.');
+      }
+
+      const dados = await resposta.json();
+
+      if (!cancelado) {
+        setResultadosBusca(Array.isArray(dados) ? dados : []);
+      }
+    } catch (error) {
+      console.error('Erro na pesquisa:', error);
+
+      if (!cancelado) {
+        setResultadosBusca([]);
+        setErroBusca('Não foi possível pesquisar. Confira se o servidor está ligado.');
+      }
+    } finally {
+      if (!cancelado) {
+        setBuscandoFilmes(false);
+      }
+    }
+  }, 400);
+
+  // Cancela a pesquisa anterior quando o texto muda.
+  return () => {
+    cancelado = true;
+    clearTimeout(temporizador);
+  };
+}, [busca]);
   useEffect(() => {
   if (typeof window === 'undefined') return;
 
@@ -329,7 +388,10 @@ async function alternarFavorito(id: number) {
     if (jaFavoritado) {
       await removerFavorito(id);
     } else {
-      const filme = filmes.find((item) => item.id === id);
+      // Procura primeiro nos filmes populares e depois nos resultados da pesquisa.
+const filme =
+  filmes.find((item) => item.id === id) ||
+  resultadosBusca.find((item) => item.id === id);
 
       if (!filme) return;
 
@@ -517,11 +579,13 @@ async function excluirFilmeDaLista(listaId: number, filmeId: number) {
     alert('Não foi possível remover o filme.');
   }
 }
-const filmesFiltrados = filmes.filter((filme) =>
-  filme.title.toLowerCase().includes(busca.toLowerCase())
-);
- 
-  const destaque = filmes[0];
+// Quando houver pesquisa, utiliza os resultados recebidos do TMDB.
+// Quando não houver pesquisa, mostra os filmes populares.
+const filmesFiltrados = busca.trim()
+  ? resultadosBusca
+  : filmes;
+
+const destaque = filmes[0];
 
   if (!usuario) {
     const requisitosSenha = validarSenha(senha);
@@ -696,7 +760,7 @@ const filmesFiltrados = filmes.filter((filme) =>
           {/* FILMES POPULARES */}
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>
-              ✨ Filmes populares
+              {busca.trim() ? '🔎 Resultados da pesquisa' : '✨ Filmes populares'}
             </Text>
 
             <Text style={styles.seeAll}>
@@ -704,19 +768,21 @@ const filmesFiltrados = filmes.filter((filme) =>
             </Text>
           </View>
 
-          {carregando ? (
-            <ActivityIndicator
-              size="large"
-              color="#D65AFF"
-              style={{ marginVertical: 40 }}
-            />
-          ) : erro ? (
-            <Text style={styles.error}>{erro}</Text>
-          ) : filmesFiltrados.length === 0 ? (
-            <Text style={styles.error}>
-              Nenhum filme encontrado.
-            </Text>
-          ) : (
+          {carregando || buscandoFilmes ? (
+  <ActivityIndicator
+    size="large"
+    color="#D65AFF"
+    style={{ marginVertical: 40 }}
+  />
+) : (busca.trim() ? erroBusca : erro) ? (
+  <Text style={styles.error}>
+    {busca.trim() ? erroBusca : erro}
+  </Text>
+) : filmesFiltrados.length === 0 ? (
+  <Text style={styles.error}>
+    Nenhum filme encontrado.
+  </Text>
+) : (
             <View style={styles.movieList}>
               {filmesFiltrados.map((filme) => (
                 <View
