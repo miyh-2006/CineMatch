@@ -188,15 +188,32 @@ async function criarNovaLista() {
   }
 }
 async function editarLista(lista: { id: number; nome: string }) {
-  const novoNome = window.prompt('Digite o novo nome da lista:', lista.nome);
-
-  if (!novoNome || !novoNome.trim()) return;
-async function excluirListaDaTela(listaId: number) {
-  const confirmar = window.confirm(
-    'Tem certeza que deseja excluir esta lista?'
+  const novoNome = window.prompt(
+    'Digite o novo nome da lista:',
+    lista.nome
   );
 
-  if (!confirmar) return;
+  if (novoNome === null || !novoNome.trim()) return;
+
+  try {
+    await renomearLista(lista.id, novoNome.trim());
+
+    const atualizadas = await listarListas();
+    setListas(atualizadas);
+
+    sincronizarDados().catch((error) => {
+      console.log('Sincronização pendente:', error);
+    });
+
+    alert('Lista renomeada com sucesso!');
+  } catch (error) {
+    console.error('Erro ao renomear lista:', error);
+    alert('Não foi possível renomear a lista.');
+  }
+}
+
+async function excluirListaDaTela(listaId: number) {
+  if (!window.confirm('Deseja excluir esta lista?')) return;
 
   try {
     await excluirListaBanco(listaId);
@@ -209,22 +226,14 @@ async function excluirListaDaTela(listaId: number) {
       setFilmesDaLista([]);
     }
 
-    alert('Lista excluída com sucesso!');
-  } catch (error) {
-    console.error('Erro ao renomear lista:', error);
-    alert('Não foi possível renomear a lista.');
-  }
-}
-  try {
-    await renomearLista(lista.id, novoNome.trim());
+    sincronizarDados().catch((error) => {
+      console.log('Sincronização pendente:', error);
+    });
 
-    const atualizadas = await listarListas();
-    setListas(atualizadas);
-
-    alert('Lista renomeada com sucesso!');
+    alert('Lista excluída!');
   } catch (error) {
-    console.error('Erro ao renomear lista:', error);
-    alert('Não foi possível renomear a lista.');
+    console.error('Erro ao excluir lista:', error);
+    alert('Não foi possível excluir a lista.');
   }
 }
 useEffect(() => {
